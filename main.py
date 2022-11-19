@@ -9,16 +9,25 @@ app.config['SECRET_KEY'] = 'any-secret-key-you-choose'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////study/python_bootcamp_2/Day68_authentication_login_page/users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+login_manager = LoginManager()
+login_manager.init_app(app)
 
 
-## CREATE TABLE IN DB
+# line below is creting loader
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+
+# CREATE TABLE IN DB
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(100), unique=True)
     password = db.Column(db.String(100))
     name = db.Column(db.String(1000))
 
-#Line below only required once, when creating DB.
+
+# Line below only required once, when creating DB.
 
 # db.create_all()
 
@@ -31,15 +40,27 @@ def home():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        with app.app_context():
-            new_user = User(
-                email=request.form["email"],
-                password=request.form["password"],
-                name=request.form["name"]
-            )
-            db.session.add(new_user)
-            db.session.commit()
-        return render_template("secrets.html", name=request.form["name"])
+        # hashing the password
+        hashed_password = generate_password_hash(
+            request.form["password"],
+            method="pbkdf2:sha256",
+            salt_length=8)
+        if User.query.filter_by(email=request.form["email"]).first() is None:
+            with app.app_context():
+                new_user = User(
+                    email=request.form["email"],
+                    password=hashed_password,
+                    name=request.form["name"]
+                )
+                db.session.add(new_user)
+                db.session.commit()
+
+                # log in and authenticate user after adding details to database.
+                login_user(new_user)
+
+            return redirect(url_for("secrets"))
+        else:
+            flash("User already exist")
     return render_template("register.html")
 
 
@@ -48,29 +69,33 @@ def login():
     if request.method == "POST":
         data = User.query.filter_by(email=request.form["email"]).first()
         if data is not None:
-            if request.form["password"] == data.password:
-                return render_template("secrets.html", name=data.name)
+            if check_password_hash(data.password, request.form["password"]):
+                login_user(data)
+                return redirect(url_for('secrets'))
             else:
-                return "<h1>Authentication failed!</h1>" \
-                       "<p>Password is wrong</p>"
+                flash('You entered wrong password')
+                # return render_template("login.html")
         else:
-            return redirect("/register")
+            flash('User does note exist!')
     return render_template("login.html")
 
 
 @app.route('/secrets')
+@login_required
 def secrets():
-    return render_template("secrets.html")
+    return render_template("secrets.html", name=current_user.name)
 
 
 @app.route('/logout')
 def logout():
-    pass
+    logout_user()
+    return redirect(url_for('home'))
 
 
 @app.route('/download')
+@login_required
 def download():
-    return send_from_directory('static', filename="files/cheat_sheet.pdf")
+    return send_from_directory(directory='static', path="files/cheat_sheet.pdf")
 
 
 if __name__ == "__main__":
